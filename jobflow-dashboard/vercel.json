@@ -1,0 +1,23 @@
+{
+  "functions": {
+    "src/app/api/**": {
+      "memory": 256,
+      "maxDuration": 10
+    }
+  },
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "private, no-store" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" }
+      ]
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/slack/daily-summary",
+      "schedule": "0 22 * * *"
+    }
+  ]
+}
