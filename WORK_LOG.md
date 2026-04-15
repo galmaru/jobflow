@@ -1,7 +1,7 @@
-2026-04-15 | DESIGN_REVIEW 기반 11건 결정사항 및 버그픽스 반영해 DESIGN.md 전면 개정 | DESIGN.md
-2026-04-15 | DESIGN.md 5라운드 재검토 — fire_notify 진입점 명시, CRON_SECRET timingSafeEqual 적용, 커밋 테이블 중복 행 제거, notify_event→fire_notify 참조 통일 | DESIGN.md
-2026-04-15 | Phase 1 MCP 서버 구현 완료 — file_parser, git_ops, job_manager, task_manager, claude_md, server, CLI, 테스트 27개 전체 통과 | jobflow-mcp/src/jobflow_mcp/
-2026-04-15 | Phase 2 암호화 동기화 구현 완료 — sync.py(AES-256-GCM, GitHub API, pre-push 훅), merge.py(Task 단위 충돌), 테스트 53개 전체 통과 | jobflow-mcp/src/jobflow_mcp/sync.py, merge.py
-2026-04-15 | Phase 3 Vercel 대시보드 구현 완료 — Next.js 15, Bearer Token 인증, /api/jobs, /api/history, KanbanBoard, TaskSlideOver, HistoryViewer(dynamic), 테스트 25개 통과 | jobflow-dashboard/
-2026-04-15 | Phase 4 Slack 알림 구현 완료 — notify.py(fire-and-forget), config.py(싱글톤), /api/slack/notify(Block Kit+dedup), /api/slack/daily-summary(Cron+무활동스킵), 테스트 Python 59+JS 50개 통과 | jobflow-mcp/notify.py, jobflow-dashboard/src/app/api/slack/
-2026-04-15 | git 초기화 및 Phase 1~4 전체 7개 커밋 완료 (docs+Phase1×3+Phase2+Phase3+Phase4) | .gitignore, jobflow-mcp/, jobflow-dashboard/
+- 2026-04-15 | DESIGN_REVIEW 기반 11건 결정사항 및 버그픽스 반영해 DESIGN.md 전면 개정 | DESIGN.md
+- 2026-04-15 | DESIGN.md 5라운드 재검토 — fire_notify 진입점 명시, CRON_SECRET timingSafeEqual 적용, 커밋 테이블 중복 행 제거, notify_event→fire_notify 참조 통일 | DESIGN.md
+- 2026-04-15 | Phase 1 MCP 서버 구현 완료 — file_parser, git_ops, job_manager, task_manager, claude_md, server, CLI, 테스트 27개 전체 통과 | jobflow-mcp/src/jobflow_mcp/
+- 2026-04-15 | Phase 2 암호화 동기화 구현 완료 — sync.py(AES-256-GCM, GitHub API, pre-push 훅), merge.py(Task 단위 충돌), 테스트 53개 전체 통과 | jobflow-mcp/src/jobflow_mcp/sync.py, merge.py
+- 2026-04-15 | Phase 3 Vercel 대시보드 구현 완료 — Next.js 15, Bearer Token 인증, /api/jobs, /api/history, KanbanBoard, TaskSlideOver, HistoryViewer(dynamic), 테스트 25개 통과 | jobflow-dashboard/
+- 2026-04-15 | Phase 4 Slack 알림 구현 완료 — notify.py(fire-and-forget), config.py(싱글톤), /api/slack/notify(Block Kit+dedup), /api/slack/daily-summary(Cron+무활동스킵), 테스트 Python 59+JS 50개 통과 | jobflow-mcp/notify.py, jobflow-dashboard/src/app/api/slack/
+- 2026-04-15 | git 초기화 및 Phase 1~4 전체 7개 커밋 완료 (docs+Phase1×3+Phase2+Phase3+Phase4) | .gitignore, jobflow-mcp/, jobflow-dashboard/
