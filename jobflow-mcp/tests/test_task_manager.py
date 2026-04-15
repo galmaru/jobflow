@@ -139,3 +139,65 @@ def test_task_check_updates_job_status(fake_jobflow_with_job):
 
     job = load_job("task-test-job")
     assert job.status == "done"
+
+
+def test_task_check_with_job_disambiguates_duplicate_task_ids(tmp_path, monkeypatch):
+    jobs_dir = tmp_path / "jobs"
+    jobs_dir.mkdir()
+    monkeypatch.setattr("jobflow_mcp.job_manager.JOBFLOW_HOME", tmp_path)
+    monkeypatch.setattr("jobflow_mcp.job_manager.JOBS_DIR", jobs_dir)
+    monkeypatch.setattr("jobflow_mcp.task_manager.JOBFLOW_HOME", tmp_path)
+    monkeypatch.setattr("jobflow_mcp.git_ops.JOBFLOW_HOME", tmp_path)
+    monkeypatch.setattr("jobflow_mcp.job_manager.git_ops.git_commit", lambda *a, **kw: None)
+    monkeypatch.setattr("jobflow_mcp.task_manager.git_ops.git_commit", lambda *a, **kw: None)
+    monkeypatch.setattr("jobflow_mcp.task_manager.update_claude_md_for_job", lambda *a, **kw: None)
+
+    from jobflow_mcp.file_parser import TaskStatus
+    from jobflow_mcp.job_manager import job_new, load_job
+    from jobflow_mcp.task_manager import task_check
+
+    job_new(name="alpha-job", goal="A", tasks=["공통 번호"])
+    job_new(name="beta-job", goal="B", tasks=["공통 번호"])
+
+    with pytest.raises(ValueError, match="중복된 task_id"):
+        task_check("TASK-001")
+
+    result = task_check("TASK-001", job="beta-job")
+    assert result["to"] == "in_progress"
+
+    alpha = load_job("alpha-job")
+    beta = load_job("beta-job")
+
+    assert next(t for t in alpha.tasks if t.id == "TASK-001").status == TaskStatus.TODO
+    assert next(t for t in beta.tasks if t.id == "TASK-001").status == TaskStatus.IN_PROGRESS
+
+
+def test_task_move_with_job_disambiguates_duplicate_task_ids(tmp_path, monkeypatch):
+    jobs_dir = tmp_path / "jobs"
+    jobs_dir.mkdir()
+    monkeypatch.setattr("jobflow_mcp.job_manager.JOBFLOW_HOME", tmp_path)
+    monkeypatch.setattr("jobflow_mcp.job_manager.JOBS_DIR", jobs_dir)
+    monkeypatch.setattr("jobflow_mcp.task_manager.JOBFLOW_HOME", tmp_path)
+    monkeypatch.setattr("jobflow_mcp.git_ops.JOBFLOW_HOME", tmp_path)
+    monkeypatch.setattr("jobflow_mcp.job_manager.git_ops.git_commit", lambda *a, **kw: None)
+    monkeypatch.setattr("jobflow_mcp.task_manager.git_ops.git_commit", lambda *a, **kw: None)
+    monkeypatch.setattr("jobflow_mcp.task_manager.update_claude_md_for_job", lambda *a, **kw: None)
+
+    from jobflow_mcp.file_parser import TaskStatus
+    from jobflow_mcp.job_manager import job_new, load_job
+    from jobflow_mcp.task_manager import task_move
+
+    job_new(name="move-alpha", goal="A", tasks=["공통 번호"])
+    job_new(name="move-beta", goal="B", tasks=["공통 번호"])
+
+    with pytest.raises(ValueError, match="중복된 task_id"):
+        task_move("TASK-001", "done")
+
+    result = task_move("TASK-001", "done", job="move-alpha")
+    assert result["to"] == "done"
+
+    alpha = load_job("move-alpha")
+    beta = load_job("move-beta")
+
+    assert next(t for t in alpha.tasks if t.id == "TASK-001").status == TaskStatus.DONE
+    assert next(t for t in beta.tasks if t.id == "TASK-001").status == TaskStatus.TODO

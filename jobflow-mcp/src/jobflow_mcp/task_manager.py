@@ -92,7 +92,7 @@ def task_add(
     return {"task_id": task_id, "job_id": job_obj.job_id}
 
 
-def task_check(task_id: str) -> dict:
+def task_check(task_id: str, job: str | None = None) -> dict:
     """태스크를 다음 단계로 순차 이동 (Todo→InProgress→Done).
 
     Done에서 호출 시 에러 발생.
@@ -100,7 +100,7 @@ def task_check(task_id: str) -> dict:
     Returns:
         { "task_id": str, "from": str, "to": str }
     """
-    job_obj, task = _find_task(task_id)
+    job_obj, task = _find_task(task_id, job)
     now   = datetime.now(tz=KST)
     from_ = task.status
 
@@ -144,7 +144,7 @@ def task_check(task_id: str) -> dict:
     return {"task_id": task_id, "from": from_str, "to": to_str}
 
 
-def task_move(task_id: str, to: str) -> dict:
+def task_move(task_id: str, to: str, job: str | None = None) -> dict:
     """태스크를 임의 단계로 이동 (되돌리기/건너뛰기).
 
     Args:
@@ -158,7 +158,7 @@ def task_move(task_id: str, to: str) -> dict:
     if to not in valid:
         raise ValueError(f"유효하지 않은 단계: {to}. 허용값: {valid}")
 
-    job_obj, task = _find_task(task_id)
+    job_obj, task = _find_task(task_id, job)
     now   = datetime.now(tz=KST)
     from_ = task.status.value
 
@@ -203,19 +203,35 @@ def task_move(task_id: str, to: str) -> dict:
 
 # ── 내부 헬퍼 (로드 관련) ─────────────────────────────────────────────────────
 
-def _find_task(task_id: str):
-    """전체 Job에서 task_id 검색.
+def _find_task(task_id: str, job: str | None = None):
+    """task_id 검색.
 
     Returns:
         (Job, Task) 튜플
     """
     from .job_manager import load_all_jobs
 
-    for job_obj in load_all_jobs():
+    if job is not None:
+        job_obj = load_job(job)
         for task in job_obj.tasks:
             if task.id == task_id:
                 return job_obj, task
-    raise KeyError(f"태스크를 찾을 수 없습니다: {task_id}")
+        raise KeyError(f"해당 Job에서 태스크를 찾을 수 없습니다: {job} / {task_id}")
+
+    matches = []
+    for job_obj in load_all_jobs():
+        for task in job_obj.tasks:
+            if task.id == task_id:
+                matches.append((job_obj, task))
+
+    if not matches:
+        raise KeyError(f"태스크를 찾을 수 없습니다: {task_id}")
+    if len(matches) > 1:
+        job_names = ", ".join(sorted(match[0].job_name for match in matches))
+        raise ValueError(
+            f"중복된 task_id입니다: {task_id}. job 인자를 함께 지정하세요. 후보 Job: {job_names}"
+        )
+    return matches[0]
 
 
 def _update_job_status(job_obj) -> None:

@@ -39,8 +39,16 @@ pip install -e .
 # 초기화 (~/.jobflow 디렉토리 + AES 키 + pre-push 훅 생성)
 jobflow init
 
-# GitHub 원격 저장소 연결
+# GitHub 동기화 대상 저장소 설정
 jobflow remote add --url https://github.com/<계정>/<저장소>.git
+
+# GitHub API 토큰 설정 (둘 중 하나)
+export GITHUB_TOKEN=ghp_xxx
+# 또는
+export GH_TOKEN=ghp_xxx
+
+# 암호화 동기화 실행
+jobflow sync
 
 # 프로젝트 CLAUDE.md 연동
 jobflow link --project /path/to/your/project
@@ -55,7 +63,11 @@ jobflow link --project /path/to/your/project
   "mcpServers": {
     "jobflow": {
       "command": "/path/to/jobflow-mcp/.venv/bin/python",
-      "args": ["-m", "jobflow_mcp.server"]
+      "args": ["-m", "jobflow_mcp.server"],
+      "env": {
+        "GITHUB_TOKEN": "ghp_xxx",
+        "NOTIFY_SECRET": "<Phase 3 배포 후 설정>"
+      }
     }
   }
 }
@@ -102,7 +114,7 @@ Claude Code 세션에서 아래 도구를 사용할 수 있습니다.
 | `task_add` | 태스크 추가 |
 | `task_check` | 태스크 상태 순차 이동 (Todo → In Progress → Done) |
 | `task_move` | 태스크 임의 이동 |
-| `job_sync` | GitHub 암호화 동기화 (push) |
+| `job_sync` | GitHub API 기반 암호화 동기화 |
 | `job_pull` | GitHub에서 pull + 충돌 해결 |
 
 ---
@@ -137,6 +149,7 @@ status: "in_progress"
 
 - 태스크 파일은 GitHub 업로드 전 **AES-256-GCM**으로 암호화
 - 암호화 키(`~/.jobflow/.key`)는 로컬에만 보관 — Git 커밋 불가 (`.gitignore` 적용)
+- `~/.jobflow` 평문 repo는 원격 push하지 않으며, GitHub에는 `.enc` 파일만 업로드
 - 대시보드 API는 **Bearer Token + timingSafeEqual** 검증
 - Slack Webhook URL은 Vercel Secret으로만 관리
 

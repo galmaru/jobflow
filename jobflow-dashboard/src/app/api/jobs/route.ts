@@ -1,10 +1,16 @@
 import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { verifyBearer } from "@/lib/auth";
 import { decrypt } from "@/lib/decrypt";
 import { fetchEncFile, fetchIndex } from "@/lib/github";
 import { parseJobMarkdown } from "@/lib/parseMarkdown";
 import type { Job } from "@/lib/types";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  if (!verifyBearer(req.headers.get("authorization"))) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const keyB64 = process.env.JOBFLOW_KEY_B64;
   if (!keyB64) {
     return NextResponse.json({ error: "JOBFLOW_KEY_B64 환경변수 미설정" }, { status: 500 });

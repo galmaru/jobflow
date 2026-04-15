@@ -13,6 +13,7 @@ import base64
 import json
 import logging
 import os
+import re
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -95,16 +96,24 @@ def _load_config() -> dict:
 def _github_client() -> tuple[Github, str, str]:
     """(Github 인스턴스, repo 이름, tasks 경로) 반환.
 
-    GH_TOKEN 환경변수를 우선 사용하고, 없으면 config.yaml을 확인한다.
+    환경변수와 config.yaml을 조합해 GitHub API 대상 정보를 결정한다.
     """
-    token = os.environ.get("GH_TOKEN")
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     if not token:
-        raise EnvironmentError("GH_TOKEN 환경변수가 설정되지 않았습니다.")
+        raise EnvironmentError("GH_TOKEN 또는 GITHUB_TOKEN 환경변수가 설정되지 않았습니다.")
 
     cfg       = _load_config()
     gh_config = cfg.get("github", {})
-    repo_name = os.environ.get("GH_REPO") or gh_config.get("repo", "")
-    tasks_path = os.environ.get("GH_TASKS_PATH") or gh_config.get("path", "tasks/")
+    repo_name = (
+        os.environ.get("GH_REPO")
+        or os.environ.get("GITHUB_REPO")
+        or gh_config.get("repo", "")
+    )
+    tasks_path = (
+        os.environ.get("GH_TASKS_PATH")
+        or os.environ.get("GITHUB_PATH")
+        or gh_config.get("path", "tasks/")
+    )
 
     if not repo_name:
         raise ValueError("GitHub repo가 설정되지 않았습니다. `jobflow config set github.repo owner/repo`")
@@ -266,10 +275,22 @@ def _write_sync_log(result: dict) -> None:
     LAST_SYNC_LOG.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _load_last_synced_local_head() -> str | None:
+    """마지막 암호화 업로드 기준 로컬 commit SHA 반환."""
+    if not LAST_SYNC_LOG.exists():
+        return None
+    try:
+        data = json.loads(LAST_SYNC_LOG.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    value = data.get("local_head")
+    return value if isinstance(value, str) and value else None
+
+
 # ── MCP 도구: job_sync ────────────────────────────────────────────────────────
 
 def job_sync() -> str:
-    """미커밋 변경사항 커밋 → git push (pre-push 훅이 암호화 업로드 담당).
+    """미커밋 변경사항 커밋 → GitHub API로 .enc 업로드.
 
     Returns:
         동기화 결과 요약 문자열
@@ -286,23 +307,22 @@ def job_sync() -> str:
         )
 
     try:
-        git_ops.git_push()
-    except subprocess.CalledProcessError as e:
-        return f"❌ push 실패: {e.stderr}\nlogs/last_sync.json 확인"
+        current_head = git_ops.git_rev_parse("HEAD")
+        previous_head = _load_last_synced_local_head() or _ZEROS
+        result = push_to_github(previous_head, current_head)
+        result["local_head"] = current_head
+        _write_sync_log(result)
+    except Exception as e:
+        return f"❌ 동기화 실패: {e}\nlogs/last_sync.json 확인"
 
-    # 훅이 기록한 결과 읽기
-    if LAST_SYNC_LOG.exists():
-        data     = json.loads(LAST_SYNC_LOG.read_text(encoding="utf-8"))
-        uploaded = data.get("uploaded", [])
-        errors   = data.get("errors", [])
+    uploaded = result.get("uploaded", [])
+    errors = result.get("errors", [])
 
-        if errors:
-            return f"⚠️  동기화 부분 실패: {len(uploaded)}개 업로드, {len(errors)}개 오류\n" + "\n".join(errors)
+    if errors:
+        return f"⚠️  동기화 부분 실패: {len(uploaded)}개 업로드, {len(errors)}개 오류\n" + "\n".join(errors)
 
-        names = ", ".join(uploaded) if uploaded else "없음"
-        return f"✅ 동기화 완료: {len(uploaded)}개 업로드 ({names})"
-
-    return "✅ push 완료 (동기화 로그 없음 — remote 미설정 또는 훅 미설치)"
+    names = ", ".join(uploaded) if uploaded else "없음"
+    return f"✅ 동기화 완료: {len(uploaded)}개 업로드 ({names})"
 
 
 # ── MCP 도구: job_pull ────────────────────────────────────────────────────────
@@ -390,16 +410,27 @@ def job_pull(resolutions: dict[str, str] | None = None) -> dict | str:
 # ── CLI 진입점 (pre-push 훅에서 호출) ────────────────────────────────────────
 
 def _cli_push(from_sha: str, to_sha: str) -> None:
-    """pre-push 훅 → python -m jobflow_mcp.sync push 진입점."""
-    try:
-        result = push_to_github(from_sha, to_sha)
-        if result["errors"]:
-            print(f"[jobflow] ⚠️  암호화 업로드 오류: {result['errors']}", flush=True)
-        else:
-            print(f"[jobflow] ✅ 암호화 업로드 완료: {len(result['uploaded'])}개", flush=True)
-    except Exception as e:
-        # pre-push 훅 실패해도 git push 자체는 진행 (종료 코드 0 유지)
-        print(f"[jobflow] ⚠️  암호화 업로드 실패 (git push는 계속): {e}", flush=True)
+    """과거 pre-push 훅 호환용 진입점.
+
+    평문 태스크 repo를 원격으로 push하는 경로는 더 이상 허용하지 않는다.
+    """
+    print(
+        "[jobflow] 평문 태스크 repo push는 금지됩니다. `jobflow sync` 또는 MCP `job_sync`를 사용하세요.",
+        flush=True,
+    )
+
+
+_REPO_URL_RE = re.compile(
+    r"(?:git@github\.com:|https://github\.com/)(?P<repo>[^/]+/[^/.]+)(?:\.git)?$"
+)
+
+
+def repo_slug_from_url(url: str) -> str:
+    """GitHub remote URL에서 owner/repo 추출."""
+    match = _REPO_URL_RE.match(url.strip())
+    if not match:
+        raise ValueError(f"GitHub 저장소 URL 형식이 아닙니다: {url}")
+    return match.group("repo")
 
 
 if __name__ == "__main__":

@@ -1,10 +1,5 @@
-import dynamic from "next/dynamic";
 import Link from "next/link";
-
-const HistoryViewer = dynamic(() => import("@/components/HistoryViewer"), {
-  ssr:     false,
-  loading: () => <p className="text-gray-400 py-8 text-center">히스토리 로딩 중…</p>,
-});
+import HistoryViewer from "@/components/HistoryViewer";
 
 export default async function HistoryPage({
   params,

@@ -21,6 +21,7 @@ def fake_jobflow(tmp_path, monkeypatch):
     monkeypatch.setattr("jobflow_mcp.git_ops.JOBFLOW_HOME", tmp_path)
     # git 조작 무시
     monkeypatch.setattr("jobflow_mcp.job_manager.git_ops.git_commit", lambda *a, **kw: None)
+    monkeypatch.setattr("jobflow_mcp.job_manager.update_claude_md_for_job", lambda *a, **kw: None)
     return tmp_path
 
 
@@ -105,3 +106,28 @@ def test_job_status_output(fake_jobflow):
 
     assert "status-job" in output
     assert "Todo" in output
+
+
+def test_job_new_updates_claude_md(fake_jobflow, monkeypatch):
+    from jobflow_mcp.job_manager import job_new
+
+    called = []
+    monkeypatch.setattr("jobflow_mcp.job_manager.update_claude_md_for_job", lambda name: called.append(name))
+
+    job_new(name="claude-sync-job", goal="CLAUDE.md 갱신 테스트")
+
+    assert called == ["claude-sync-job"]
+
+
+def test_job_new_ignores_claude_md_failure(fake_jobflow, monkeypatch):
+    from jobflow_mcp.job_manager import JOBS_DIR, job_new
+
+    monkeypatch.setattr(
+        "jobflow_mcp.job_manager.update_claude_md_for_job",
+        lambda name: (_ for _ in ()).throw(RuntimeError("claude update failed")),
+    )
+
+    result = job_new(name="claude-fail-job", goal="실패 무시 테스트")
+
+    assert result["job_id"].startswith("job-")
+    assert (JOBS_DIR / "todo-claude-fail-job.md").exists()

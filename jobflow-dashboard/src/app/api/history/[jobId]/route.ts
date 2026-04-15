@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { verifyBearer } from "@/lib/auth";
 import { decrypt } from "@/lib/decrypt";
 import {
   fetchCommits,
@@ -12,6 +13,10 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ jobId: string }> }
 ) {
+  if (!verifyBearer(req.headers.get("authorization"))) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const { jobId } = await params;
   const sha       = req.nextUrl.searchParams.get("sha");
   const keyB64    = process.env.JOBFLOW_KEY_B64;

@@ -93,3 +93,9 @@ def git_log(n: int = 10) -> str:
     """최근 n개 커밋 로그 반환."""
     result = _run(["git", "log", f"-{n}", "--oneline"])
     return result.stdout
+
+
+def git_rev_parse(target: str) -> str:
+    """git rev-parse 결과 반환."""
+    result = _run(["git", "rev-parse", target])
+    return result.stdout.strip()

@@ -11,6 +11,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from . import git_ops
+from .claude_md import update_claude_md_for_job
 from .file_parser import (
     ChecklistItem,
     Job,
@@ -155,6 +156,11 @@ def job_new(
         f"feat(jobflow): create job {job_id} — {name}",
         [rel_path],
     )
+
+    try:
+        update_claude_md_for_job(name)
+    except Exception as e:
+        logger.warning("CLAUDE.md 갱신 실패 (무시): %s", e)
 
     logger.info("Job 생성 완료: %s (%s)", job_id, name)
     return {

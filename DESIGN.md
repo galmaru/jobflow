@@ -395,9 +395,14 @@ jobflow init
 #   - config.yaml 템플릿 생성
 #   - 첫 커밋
 
-# 3. GitHub remote 연결
+# 3. GitHub 동기화 대상 저장소 설정
 jobflow remote add --url git@github.com:owner/jobflow-tasks.git
-#   내부: git remote add origin <url>; git push -u origin main
+#   내부: config.yaml의 github.repo/path 설정, 평문 repo push는 하지 않음
+
+# 3-1. GitHub API 토큰 설정 (둘 중 하나)
+export GITHUB_TOKEN=ghp_xxx
+# 또는
+export GH_TOKEN=ghp_xxx
 
 # 4. Claude Code settings.json에 MCP 서버 등록
 # ~/.claude/settings.json
@@ -408,16 +413,20 @@ jobflow remote add --url git@github.com:owner/jobflow-tasks.git
       "args": ["-m", "jobflow_mcp.server"],
       "env": {
         "JOBFLOW_HOME": "~/.jobflow",
+        "GITHUB_TOKEN": "<GitHub PAT with repo access>",
         "NOTIFY_SECRET": "<Phase 3 배포 후 설정>"
       }
     }
   }
 }
 
-# 5. 프로젝트 CLAUDE.md 연결
+# 5. 암호화 동기화
+jobflow sync
+
+# 6. 프로젝트 CLAUDE.md 연결
 jobflow link --project /path/to/project
 
-# 6. Phase 3 배포 후
+# 7. Phase 3 배포 후
 jobflow config set vercel.dashboard_url https://jobflow-xxx.vercel.app
 ```
 
@@ -513,31 +522,26 @@ python -c "import os; open('.key','wb').write(os.urandom(32))"
 vercel env add JOBFLOW_KEY_B64 production  # base64(key) 값 입력
 ```
 
-### 2.2 Git Push 훅 구조
+### 2.2 GitHub API 동기화 구조
 
-> **훅 대상 repo**: `~/.jobflow/.git/hooks/pre-push` (JobFlow 태스크 repo). 코드 프로젝트 repo와는 무관.
+> **보안 정책**: `~/.jobflow/` 평문 repo는 원격 push하지 않음. GitHub에는 `job_sync`/`jobflow sync`를 통해 `.enc` 파일과 `.jobflow-index.json`만 업로드.
 
 #### pre-push 훅 (`~/.jobflow/.git/hooks/pre-push`)
 
 ```bash
 #!/usr/bin/env bash
-# JobFlow: ~/.jobflow/jobs/*.md → .enc 암호화 후 GitHub 업로드
+# JobFlow: 평문 태스크 repo push 차단
 set -e
 
-# pre-push 훅은 stdin에서 push 범위를 받음
-# 형식: <local-ref> <local-sha1> <remote-ref> <remote-sha1>
-while read local_ref local_sha remote_ref remote_sha; do
-    python -m jobflow_mcp.sync push \
-        --from-sha "${remote_sha}" \
-        --to-sha   "${local_sha}"
-done
+echo '[jobflow] 평문 태스크 repo는 push할 수 없습니다. jobflow sync 또는 MCP job_sync를 사용하세요.' >&2
+exit 1
 ```
 
 #### `sync.py` push 흐름
 
 ```
 입력:
-  --from-sha: remote의 마지막 커밋 SHA (신규 push면 "0000...0000")
+  --from-sha: 마지막 암호화 업로드 기준 로컬 커밋 SHA (최초 sync면 "0000...0000")
   --to-sha:   로컬의 최신 커밋 SHA
 
 처리:
@@ -556,22 +560,22 @@ done
 
 ### 2.3 동기화 MCP 도구
 
-#### `job_sync`
+#### `job_sync` / `jobflow sync`
 
 ```
 입력: (없음)
 
 처리:
   1. git add/commit (미커밋 변경사항 보장)
-  2. git push
-     → pre-push 훅이 트리거되어 .md → .enc 암호화 후 GitHub API PUT
-     → 훅이 결과를 ~/.jobflow/logs/last_sync.json 에 기록
+  2. 마지막 암호화 업로드 기준 local SHA와 현재 HEAD를 비교
+  3. 변경된 .md → .enc 암호화 후 GitHub API PUT
+  4. 결과를 ~/.jobflow/logs/last_sync.json 에 기록
   3. last_sync.json 읽어 결과 요약 반환
      예: "동기화 완료: 2개 업로드 (kbo-app.md.enc, srt-app.md.enc)"
-     실패 시: "push 실패 또는 암호화 업로드 실패 — logs/last_sync.json 확인"
+     실패 시: "암호화 업로드 실패 — logs/last_sync.json 확인"
 
-주의: 직접 GitHub API PUT을 수행하지 않음.
-      암호화 업로드는 pre-push 훅이 단일 책임을 가짐.
+주의: 평문 repo는 원격 push하지 않음.
+      암호화 업로드는 GitHub API가 단일 책임을 가짐.
 ```
 
 #### `job_pull` (Task 단위 충돌 감지, 단일 도구 + resolutions)
@@ -756,7 +760,6 @@ jobflow-dashboard/
 │   │   ├── auth.ts                 # Bearer Token 검증
 │   │   ├── github.ts
 │   │   └── types.ts
-│   ├── middleware.ts               # /api/* 토큰 검증
 │   └── hooks/
 │       └── useJobs.ts              # SWR (revalidateOnFocus, refreshInterval)
 ├── .env.local
@@ -783,28 +786,7 @@ export function verifyBearer(authHeader: string | null): boolean {
 }
 ```
 
-#### `src/middleware.ts`
-
-```typescript
-import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server";
-import { verifyBearer } from "@/lib/auth";
-
-export function middleware(req: NextRequest) {
-  // /api/slack/* 는 자체 인증 로직 (NOTIFY_SECRET, CRON_SECRET) 사용
-  if (req.nextUrl.pathname.startsWith("/api/slack/")) {
-    return NextResponse.next();
-  }
-  if (req.nextUrl.pathname.startsWith("/api/")) {
-    if (!verifyBearer(req.headers.get("authorization"))) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-  }
-  return NextResponse.next();
-}
-
-export const config = { matcher: "/api/:path*" };
-```
+> 구현 메모: Next.js Edge Runtime 제약 때문에 공통 `middleware.ts` 대신 각 API Route 내부에서 `verifyBearer()`를 직접 호출한다. `/api/slack/*`는 자체 시크릿 검증을 유지한다.
 
 #### 프론트엔드 플로우
 
@@ -819,7 +801,7 @@ export const config = { matcher: "/api/:path*" };
 
 ```
 처리:
-  1. Bearer Token 검증 (middleware)
+  1. Bearer Token 검증 (`route.ts` 내부)
   2. Vercel Secret에서 JOBFLOW_KEY_B64 로드
   3. GitHub: .jobflow-index.json 조회
   4. 각 .enc 파일 병렬 다운로드 (Promise.all)
@@ -936,12 +918,7 @@ export function decrypt(encData: Buffer, keyB64: string): string {
 
 ```tsx
 // src/app/jobs/[jobId]/history/page.tsx
-import dynamic from "next/dynamic";
-
-const HistoryViewer = dynamic(() => import("@/components/HistoryViewer"), {
-  ssr: false,
-  loading: () => <div>히스토리 로딩 중…</div>,
-});
+import HistoryViewer from "@/components/HistoryViewer";
 ```
 
 동작:
@@ -980,9 +957,9 @@ export function useJobs() {
 |--------|------|------|
 | `JOBFLOW_KEY_B64` | Vercel Secret | AES-256 키 (base64) |
 | `DASHBOARD_TOKEN` | Vercel Secret | 대시보드 Bearer Token (`openssl rand -hex 32`) |
-| `GH_TOKEN` | Vercel Secret | GitHub PAT (repo:read) |
-| `GH_REPO` | Vercel Env | `owner/repo` |
-| `GH_TASKS_PATH` | Vercel Env | `tasks/` |
+| `GITHUB_TOKEN` 또는 `GH_TOKEN` | Vercel Secret | GitHub PAT (repo 접근 필요) |
+| `GITHUB_REPO` 또는 `GH_REPO` | Vercel Env | `owner/repo` |
+| `GITHUB_PATH` 또는 `GH_TASKS_PATH` | Vercel Env | `tasks/` |
 
 > `DASHBOARD_TOKEN`과 Phase 4의 `NOTIFY_SECRET`은 **반드시 별도 값**을 사용.
 
@@ -1014,7 +991,7 @@ export function useJobs() {
 |--------|----------|
 | `decrypt.test.ts` | Python 암호화 파일 → TS 복호화 동일 내용 |
 | `auth.test.ts` | 올바른 토큰 200, 잘못된 토큰 401, 누락 시 401 |
-| `api/jobs.test.ts` | 인증 middleware 통과 후 응답 구조 |
+| `api/jobs.test.ts` | route 내부 Bearer 검증 후 응답 구조 |
 | `api/history.test.ts` | sha 유/무에 따른 응답 분기 |
 | `KanbanBoard.test.tsx` | 3컬럼 렌더링, 빈 컬럼 처리 |
 | `TaskSlideOver.test.tsx` | 열기/닫기, 체크리스트 표시 |
@@ -1294,7 +1271,7 @@ export async function GET(req: NextRequest) {
 | `CRON_SECRET` | Vercel Secret (자동 생성) | Vercel Cron 인증 |
 
 > `buildDailySummary()`는 `/api/jobs`와 동일하게 GitHub에서 `.enc` 파일을 복호화해야 함.
-> 따라서 **3.8절의 `JOBFLOW_KEY_B64`, `GH_TOKEN`, `GH_REPO`, `GH_TASKS_PATH`도 동일하게 필요**.
+> 따라서 **3.8절의 `JOBFLOW_KEY_B64`, `GITHUB_TOKEN`/`GH_TOKEN`, `GITHUB_REPO`/`GH_REPO`, `GITHUB_PATH`/`GH_TASKS_PATH`도 동일하게 필요**.
 
 ### 4.8 테스트 계획 (Phase 4)
 
@@ -1318,7 +1295,7 @@ export async function GET(req: NextRequest) {
   - 소스 코드                     - 태스크 Markdown 파일
   - CLAUDE.md (JOBFLOW 블록)      - config.yaml, .key(gitignore)
   - 원격: 프로젝트 저장소          - 원격: jobflow-tasks repo
-                                  - pre-push 훅: .md → .enc 암호화 업로드
+                                  - job_sync / jobflow sync: .md → .enc GitHub API 업로드
 
 연결 지점:
   `jobflow link --project <path>` 
@@ -1369,7 +1346,7 @@ Phase 4 (Slack 알림)                     ← Phase 3의 Vercel URL 필요
 | 1 | Phase 1 MCP 기본 도구 (`job_new`, `task_add`, `task_check`) | 없음 |
 | 2 | Phase 1 `jobflow init` (git init 포함) + git 자동 커밋 + CLAUDE.md 연동 | 1 |
 | 3 | Phase 2 암호화 구현 + `job_sync` + `job_pull` (Task 단위 머지) | 1,2 |
-| 4 | Phase 3 API Routes (복호화 + GitHub) + Bearer Token middleware | 3 |
+| 4 | Phase 3 API Routes (복호화 + GitHub) + route별 Bearer Token 검증 | 3 |
 | 5 | Phase 3 Kanban UI (3컬럼, 반응형) | 4 |
 | 6 | Phase 4 Slack 알림 | 5 (Vercel URL 필요) |
 | 7 | Phase 3 히스토리 뷰어 (lazy load, `diff2html` dynamic import) | 5 |

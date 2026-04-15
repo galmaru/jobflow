@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -14,8 +15,8 @@ import mcp.server.stdio
 import mcp.types as types
 from mcp.server import Server
 
-from . import git_ops
 from .claude_md import update_all_claude_mds
+from .config import get as get_config
 from .job_manager import job_list, job_new, job_status
 from .sync import job_pull, job_sync
 from .task_manager import task_add, task_check, task_move
@@ -44,14 +45,16 @@ app = Server("jobflow")
 async def _auto_pull() -> None:
     """GitHub에서 최신 상태 가져옴. 실패해도 로컬 상태로 계속 진행."""
     global _last_pull_at
-    if not git_ops.has_remote():
+    has_repo = bool(get_config("github.repo"))
+    has_token = bool(os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"))
+    if not (has_repo and has_token):
         return
     try:
-        git_ops.git_pull()
+        await asyncio.to_thread(job_pull)
         _last_pull_at = datetime.now()
         await asyncio.to_thread(update_all_claude_mds)
         logger.info("auto-pull 완료")
-    except subprocess.CalledProcessError as e:
+    except (subprocess.CalledProcessError, FileNotFoundError, ValueError) as e:
         logger.warning("auto-pull 실패, 로컬 상태로 계속 진행: %s", e)
 
 
@@ -142,6 +145,10 @@ async def list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "job": {
+                        "type": "string",
+                        "description": "job_id 또는 job_name (중복 task_id 방지를 위해 권장)",
+                    },
                     "task_id": {"type": "string", "description": "예: TASK-002"}
                 },
                 "required": ["task_id"],
@@ -153,6 +160,10 @@ async def list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "job": {
+                        "type": "string",
+                        "description": "job_id 또는 job_name (중복 task_id 방지를 위해 권장)",
+                    },
                     "task_id": {"type": "string"},
                     "to": {
                         "type": "string",
@@ -235,13 +246,13 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             text = f"✅ {result['task_id']} 추가됨 (Job: {result['job_id']})"
 
         elif name == "task_check":
-            result = task_check(arguments["task_id"])
+            result = task_check(arguments["task_id"], arguments.get("job"))
             text = (
                 f"✅ {result['task_id']}: {result['from']} → {result['to']}"
             )
 
         elif name == "task_move":
-            result = task_move(arguments["task_id"], arguments["to"])
+            result = task_move(arguments["task_id"], arguments["to"], arguments.get("job"))
             text = (
                 f"✅ {result['task_id']} 이동: {result['from']} → {result['to']}"
             )

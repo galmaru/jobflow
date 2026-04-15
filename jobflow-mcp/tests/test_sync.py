@@ -13,10 +13,12 @@ from jobflow_mcp.sync import (
     MAGIC,
     decrypt,
     encrypt,
+    job_sync,
     key_from_b64,
     key_to_b64,
     load_key,
     push_to_github,
+    repo_slug_from_url,
 )
 
 
@@ -205,3 +207,26 @@ def test_sync_log_written(fake_jobflow_sync, monkeypatch):
     data = json.loads(log_path.read_text())
     assert "uploaded" in data
     assert "synced_at" in data
+
+
+def test_repo_slug_from_url_supports_ssh_and_https():
+    assert repo_slug_from_url("git@github.com:owner/repo.git") == "owner/repo"
+    assert repo_slug_from_url("https://github.com/owner/repo.git") == "owner/repo"
+
+
+def test_job_sync_uses_local_commit_range(fake_jobflow_sync, monkeypatch):
+    home, jobs_dir, _ = fake_jobflow_sync
+    _make_sample_md(jobs_dir)
+
+    monkeypatch.setattr("jobflow_mcp.sync._load_last_synced_local_head", lambda: "prevsha")
+    monkeypatch.setattr("jobflow_mcp.sync.push_to_github", lambda a, b: {"uploaded": ["todo-kbo-app.md.enc"], "errors": []})
+    monkeypatch.setattr("jobflow_mcp.git_ops.git_status", lambda: "")
+    monkeypatch.setattr("jobflow_mcp.git_ops.git_rev_parse", lambda target: "headsha")
+
+    result = job_sync()
+
+    assert "1개 업로드" in result
+
+    log_path = home / "logs" / "last_sync.json"
+    data = json.loads(log_path.read_text(encoding="utf-8"))
+    assert data["local_head"] == "headsha"
